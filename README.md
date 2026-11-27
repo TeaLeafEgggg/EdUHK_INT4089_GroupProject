@@ -12,9 +12,3 @@ On another Mac, supply your own `FRIDGE_BOT_TOKEN` and `FRIDGE_CHAT_ID` as local
 | --- | --- |
 | Arduino Uno R3 with GPS-23L fridge-door switch and Grove buzzer | [fridge_switch.ino](diagnostics/fridge_switch/fridge_switch.ino) |
 | NodeMCU ESP8266 with MLX90614 sensor and the Adafruit MLX90614 Arduino library | [esp8266_sensor_test.ino](diagnostics/esp8266_sensor_test/esp8266_sensor_test.ino) |
-
-## Demo materials
-
-- [Part 1.mp4](Part%201.mp4)
-- [Part 2.mp4](Part%202.mp4)
-- [Archive](Archive) contains earlier prototypes, checklists, reference material, and source artwork.
