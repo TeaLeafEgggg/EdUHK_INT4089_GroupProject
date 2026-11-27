@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VIK | Current Status</title>
+<style>
+    :root { color-scheme: light; font-family: system-ui, sans-serif; color: #162e2a; background: #eff5f1; }
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+    main { width: min(100% - 2rem, 66rem); margin: clamp(1rem, 7vh, 5rem) auto; }
+    header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1.5rem; }
+    header p { color: #435f54; font-weight: 600; margin: 0; }
+    h1 { margin: .25rem 0 0; font-size: clamp(2rem, 5vw, 3.3rem); letter-spacing: -.04em; }
+    header a { color: #12604a; font-weight: 700; }
+    .readings { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+    article { padding: clamp(1rem, 3vw, 1.6rem); background: white; border: 1px solid #cbdcd1; border-top: 4px solid #617c70; border-radius: .85rem; }
+    article[data-state="live"] { border-top-color: #12604a; }
+    article[data-state="open"] { border-top-color: #956509; }
+    h2 { margin: 0 0 .65rem; color: #435f54; font-size: 1rem; font-weight: 700; }
+    strong { display: block; font-size: clamp(1.5rem, 3vw, 2.2rem); line-height: 1.15; overflow-wrap: anywhere; }
+    #door-timer { font-variant-numeric: tabular-nums; margin: .5rem 0 0; }
+    .detail { color: #435f54; line-height: 1.4; margin: .55rem 0 0; overflow-wrap: anywhere; }
+    .limit { margin-top: 1rem; border-top: 1px solid #dce7df; padding-top: .8rem; }
+    .limit label { display: block; font-weight: 600; margin-bottom: .4rem; }
+    .limit input, .limit button { font: inherit; }
+    .limit input[type=text] { width: 7rem; padding: .3rem; }
+    .limit input[type=range] { vertical-align: middle; width: min(55%, 12rem); accent-color: #12604a; }
+    .limit button { padding: .3rem .7rem; }
+    .feedback { display: block; margin-top: .35rem; }
+    #connection { margin-top: 1rem; color: #842d2a; }
+    @media (max-width: 700px) {
+        header { margin-bottom: .85rem; }
+        .readings { grid-template-columns: 1fr; gap: .6rem; }
+        article { padding: .75rem 1rem; }
+        h2 { margin-bottom: .3rem; }
+        .detail { margin-top: .3rem; }
+    }
+</style>
+</head>
+<body>
+<main>
+    <header>
+        <div><p>VIK</p><h1>Current Status</h1></div>
+        <a href="/">Bot Controls</a>
+    </header>
+    <div class="readings">
+        <article id="door" aria-labelledby="door-label">
+            <h2 id="door-label">Fridge Door</h2>
+            <strong>Waiting for Uno</strong>
+            <p id="door-timer">Time open · —</p>
+            <p class="detail">Connect the Uno over USB and close Arduino Serial Monitor.</p>
+            <form class="limit" data-key="door_seconds">
+                <label for="door-limit">Telegram door warning delay (0–30 seconds)</label>
+                <input id="door-limit" name="value" type="text" maxlength="100" placeholder="Default">
+                <button type="submit" disabled>Apply</button>
+                <span class="feedback" role="status"></span>
+            </form>
+        </article>
+        <article id="buzzer" aria-labelledby="buzzer-label">
+            <h2 id="buzzer-label">Buzzer</h2>
+            <strong>Waiting for Uno</strong>
+            <p class="detail">Connect the Uno for live status. Default buzzer delay: 60 seconds.</p>
+            <form class="limit" data-key="buzz_delay_s">
+                <label for="buzz-length">Start buzzing after the door is open for <output id="buzz-value" for="buzz-length">60</output> seconds</label>
+                <input id="buzz-length" name="value" type="range" min="10" max="60" step="1" value="60" aria-label="Door-open delay before buzzing in seconds">
+                <button type="submit" disabled>Apply</button>
+                <span class="feedback" role="status"></span>
+            </form>
+            <form class="limit" data-key="muted">
+                <input type="hidden" name="value" value="1">
+                <button type="submit" disabled>Mute buzzer</button>
+                <span class="feedback" role="status"></span>
+            </form>
+        </article>
+        <article id="temperature" aria-labelledby="temperature-label">
+            <h2 id="temperature-label">Ambient Temperature</h2>
+            <strong>Waiting for sensor</strong>
+            <p class="detail">Connect the ESP8266 over USB.</p>
+            <form class="limit" data-key="ambient_c">
+                <label for="heat-limit">Warn above <output for="heat-limit" id="heat-value"></output> °C</label>
+                <input id="heat-limit" name="value" type="range" min="20" max="90" step="1" value="55" aria-label="Ambient warning temperature in degrees Celsius">
+                <button type="submit" disabled>Apply</button>
+                <span class="feedback" role="status"></span>
+            </form>
+        </article>
+        <article id="nfc" aria-labelledby="nfc-label">
+            <h2 id="nfc-label">Latest NFC Tag</h2>
+            <strong>No tag scanned</strong>
+            <p class="detail">Scan an ingredient tag with the NFC gateway running.</p>
+        </article>
+    </div>
+    <p id="connection" role="status" hidden>The dashboard connection was lost. Last displayed values may be out of date.</p>
+</main>
+<script>
+    const connection = document.querySelector('#connection');
+    const cards = Object.fromEntries(['door', 'buzzer', 'temperature', 'nfc'].map(id => [id, document.getElementById(id)]));
+
+    function timeLabel(seenAt) {
+        return new Date(seenAt * 1000).toLocaleString([], {
+            month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit'
+        });
+    }
+
+    function card(id, state, value, detail) {
+        const element = cards[id];
+        element.dataset.state = state;
+        const display = element.querySelector('strong');
+        const caption = element.querySelector('.detail');
+        if (display.textContent !== value) display.textContent = value;
+        if (caption.textContent !== detail) caption.textContent = detail;
+    }
+
+    const doorTimer = document.querySelector('#door-timer');
+    let lastDoor = null;
+    try { lastDoor = JSON.parse(sessionStorage.getItem('doorTimer')); } catch {}
+
+
+    function showDoorTime(door) {
+        if (!door) {
+            lastDoor = null;
+            try { sessionStorage.removeItem('doorTimer'); } catch {}
+            doorTimer.textContent = 'Time open · —';
+            return;
+        }
+        // Older running readers only send seen_at. Track their first observed open sample.
+        const continuing = lastDoor?.opened && (lastDoor.live || door.seen_at === lastDoor.seen_at) && door.seen_at >= lastDoor.seen_at
+            && door.seen_at - lastDoor.seen_at <= 6;
+        const since = door.opened_since ?? (continuing ? lastDoor.since : (door.live ? door.seen_at : null));
+        lastDoor = {...door, since};
+        try { sessionStorage.setItem('doorTimer', JSON.stringify(lastDoor)); } catch {}
+        const end = door.live ? Date.now() / 1000 : door.seen_at;
+        const elapsed = door.opened ? Math.max(0, Math.floor(end - since)) : 0;
+        const minutes = String(Math.floor(elapsed / 60)).padStart(2, '0');
+        const seconds = String(elapsed % 60).padStart(2, '0');
+        const label = door.live ? 'Time open' : 'Last confirmed time open';
+        doorTimer.textContent = door.opened && !door.live && !Number.isFinite(since)
+            ? 'Time open · —' : `${label} · ${minutes}:${seconds}`;
+    }
+
+    const forms = document.querySelectorAll('.limit');
+
+    for (const form of forms) {
+        const input = form.elements.value;
+        const feedback = form.querySelector('.feedback');
+        const button = form.querySelector('button');
+        input.addEventListener('input', () => {
+            form.dataset.dirty = 'yes';
+            feedback.textContent = '';
+            if (input.type === 'range') form.querySelector('output').value = input.value;
+        });
+        form.addEventListener('submit', async event => {
+            event.preventDefault();
+            button.disabled = input.disabled = true;
+            try {
+                const response = await fetch('/api/warning-limit', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({name: form.dataset.key, value: input.value})
+                });
+                if (!response.ok) throw new Error(response.status === 400
+                    ? 'Enter 0–30 seconds as a whole number, decimal or fraction.'
+                    : 'Could not save. Please try again.');
+                const result = await response.json();
+                if (form.dataset.key === 'muted') {
+                    input.value = result.value ? '0' : '1';
+                    button.textContent = result.value ? 'Enable buzzer' : 'Mute buzzer';
+                } else input.value = result.value ?? '';
+                delete form.dataset.dirty;
+                feedback.textContent = 'Saved';
+            } catch (error) {
+                feedback.textContent = error.message;
+            } finally {
+                button.disabled = input.disabled = false;
+            }
+        });
+    }
+
+    function render({door, buzzer, temperature, nfc, limits}) {
+        if (limits?.muted == null || limits?.buzz_delay_s == null) {
+            for (const form of forms) {
+                form.querySelector('.feedback').textContent = 'Restart StartFrontendDemo.command to enable these settings.';
+                form.querySelector('button').disabled = true;
+            }
+        } else {
+            for (const form of forms) {
+                const input = form.elements.value;
+                if (form.dataset.dirty || input.disabled) continue;
+                if (form.dataset.key === 'muted') {
+                    input.value = limits.muted ? '0' : '1';
+                    form.querySelector('button').textContent = limits.muted ? 'Enable buzzer' : 'Mute buzzer';
+                } else input.value = limits[form.dataset.key];
+                form.querySelector('button').disabled = false;
+                if (input.type === 'range') form.querySelector('output').value = input.value;
+            }
+        }
+        showDoorTime(door);
+        if (door) {
+            const position = door.opened ? 'Open' : 'Closed';
+            card('door', door.live ? (door.opened ? 'open' : 'live') : 'stale',
+                 door.live ? position : `Last seen: ${position}`, door.live ? `Updated ${timeLabel(door.seen_at)}`
+                     : `Waiting for fresh Uno readings · Last update ${timeLabel(door.seen_at)}. Check USB and close Serial Monitor.`);
+        } else {
+            card('door', 'waiting', 'Waiting for Uno', 'Connect the Uno over USB and close Arduino Serial Monitor.');
+        }
+        if (buzzer) {
+            const activity = buzzer.muted ? 'muted' : buzzer.buzzing ? 'buzzing' : 'idle';
+            const settings = buzzer.muted != null && buzzer.delay_s != null
+                ? `Uno: starts after ${buzzer.delay_s} s open · ${buzzer.muted ? 'sound disabled' : 'sound enabled'}`
+                : 'Upload the updated fridge_switch sketch to sync settings.';
+            card('buzzer', buzzer.live ? (buzzer.buzzing ? 'open' : 'live') : 'stale',
+                 buzzer.live ? activity : `Last seen: ${activity}`, `${settings} · Updated ${timeLabel(buzzer.seen_at)}`);
+        } else {
+            card('buzzer', 'waiting', 'Waiting for Uno', 'Connect the Uno for live status. Default buzzer delay: 60 seconds.');
+        }
+        if (temperature) {
+            const label = temperature.live ? 'Updated' : 'Last reading';
+            card('temperature', temperature.live ? 'live' : 'stale', `${temperature.ambient.toFixed(1)} °C`,
+                 `${label} ${timeLabel(temperature.seen_at)}`);
+        } else {
+            card('temperature', 'waiting', 'Waiting for sensor', 'Connect the ESP8266 and close Arduino Serial Monitor.');
+        }
+        if (nfc) {
+            card('nfc', 'live', nfc.ingredient, `${nfc.tag} · ${timeLabel(nfc.seen_at)}`);
+        } else {
+            card('nfc', 'waiting', 'No tag scanned', 'Scan an ingredient tag with the NFC gateway running.');
+        }
+    }
+
+    async function refresh() {
+        try {
+            const response = await fetch('/api/current-status', {cache: 'no-store'});
+            if (!response.ok) throw new Error('Dashboard request failed');
+            render(await response.json());
+            connection.hidden = true;
+        } catch {
+            if (lastDoor?.live) showDoorTime({...lastDoor, opened_since: lastDoor.since, live: false});
+            connection.hidden = false;
+        }
+        setTimeout(refresh, 1000);
+    }
+    refresh();
+</script>
+</body>
+</html>
